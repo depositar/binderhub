@@ -5,7 +5,7 @@
 #       helm-chart folder.
 charts:
   - name: binderhub
-    baseVersion: 1.0.0-0.dev
+    baseVersion: 1.0.0-0.dev.depositar
     imagePrefix: quay.io/jupyterhub/k8s-
     repo:
       git: jupyterhub/helm-chart
