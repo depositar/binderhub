@@ -15,7 +15,7 @@ import re
 import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import escapism
 from prometheus_client import Gauge
@@ -446,6 +446,87 @@ class HydroshareProvider(RepoProvider):
 
     def get_build_slug(self):
         return f"hydroshare-{self.record_id}"
+
+
+class CKANProvider(RepoProvider):
+    """Provide contents of a CKAN dataset
+    Users must provide a spec consisting of the CKAN dataset URL.
+    """
+
+    name = Unicode("CKAN")
+
+    display_name = "CKAN dataset"
+
+    labels = {
+        "text": "CKAN dataset URL (https://demo.ckan.org/dataset/sample-dataset-1)",
+        "tag_text": "Git ref (branch, tag, or commit)",
+        "ref_prop_disabled": True,
+        "label_prop_disabled": True,
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.repo = urllib.parse.unquote(self.spec)
+
+    async def get_resolved_ref(self):
+        parsed_repo = urlparse(self.repo)
+
+        url_parts_1 = parsed_repo.path.split("/history/")
+        url_parts_2 = url_parts_1[0].split("/")
+        if url_parts_2[-2] == "dataset":
+            self.dataset_id = url_parts_2[-1]
+        else:
+            return None
+
+        api_url_path = "/api/3/action/"
+        api = parsed_repo._replace(
+            path="/".join(url_parts_2[:-2]) + api_url_path, query=""
+        ).geturl()
+
+        # handle the activites
+        activity_id = None
+        if parse_qs(parsed_repo.query).get("activity_id") is not None:
+            activity_id = parse_qs(parsed_repo.query).get("activity_id")[0]
+        if len(url_parts_1) == 2:
+            activity_id = url_parts_1[-1]
+        if activity_id:
+            fetch_url = (
+                f"{api}activity_data_show?" f"id={activity_id}&object_type=package"
+            )
+        else:
+            fetch_url = f"{api}package_show?id={self.dataset_id}"
+
+        client = AsyncHTTPClient()
+        try:
+            r = await client.fetch(fetch_url, user_agent="BinderHub")
+        except HTTPError:
+            return None
+
+        json_response = json.loads(r.body)
+        date = json_response["result"]["metadata_modified"]
+        parsed_date = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%f")
+        epoch = parsed_date.replace(tzinfo=timezone(timedelta(0))).timestamp()
+        # truncate the timestamp
+        dataset_version = str(int(epoch))
+
+        self.record_id = f"{self.dataset_id}.v{dataset_version}"
+
+        return self.record_id
+
+    async def get_resolved_spec(self):
+        if not hasattr(self, "record_id"):
+            await self.get_resolved_ref()
+        return self.repo
+
+    def get_repo_url(self):
+        return self.repo
+
+    async def get_resolved_ref_url(self):
+        resolved_spec = await self.get_resolved_spec()
+        return resolved_spec
+
+    def get_build_slug(self):
+        return f"ckan-{self.dataset_id}"
 
 
 class GitRepoProvider(RepoProvider):
