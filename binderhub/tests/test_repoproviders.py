@@ -220,12 +220,31 @@ async def test_dataverse(
             "https://demo.ckan.org/dataset/sample-dataset-1",
             "ckan-sample-dataset-1",
         ],
+        [
+            "https://demo.datashades.com/dataset/chart-test?activity_id=061888e9-e3c2-4769-b097-9c195a841e2f",
+            "https://demo.datashades.com/dataset/chart-test?activity_id=061888e9-e3c2-4769-b097-9c195a841e2f",
+            "chart-test.v1717501747",
+            "https://demo.datashades.com/dataset/chart-test?activity_id=061888e9-e3c2-4769-b097-9c195a841e2f",
+            "ckan-chart-test",
+        ],
+        [
+            "https://demo.datashades.com/dataset/chart-test/history/061888e9-e3c2-4769-b097-9c195a841e2f",
+            "https://demo.datashades.com/dataset/chart-test/history/061888e9-e3c2-4769-b097-9c195a841e2f",
+            "chart-test.v1717501747",
+            "https://demo.datashades.com/dataset/chart-test/history/061888e9-e3c2-4769-b097-9c195a841e2f",
+            "ckan-chart-test",
+        ],
+        ["https://demo.ckan.org/group/roger", None, None, None, None],
+        ["https://demo.ckan.org/dataset/nosuchdataset", None, None, None, None],
     ],
 )
 async def test_ckan(spec, resolved_spec, resolved_ref, resolved_ref_url, build_slug):
     provider = CKANProvider(spec=spec)
 
     ref = await provider.get_resolved_ref()
+    if not resolved_ref:
+        # We are done here if we don't expect to resolve
+        return
     assert resolved_ref in ref
 
     slug = provider.get_build_slug()
@@ -289,6 +308,29 @@ def test_not_banned():
 def test_banned():
     provider = GitHubRepoProvider(
         spec="jupyterhub/zero-to-jupyterhub-k8s/v0.4", banned_specs=["^jupyterhub.*"]
+    )
+    assert provider.is_banned()
+
+
+def test_allowed():
+    provider = GitHubRepoProvider(
+        spec="jupyterhub/zero-to-jupyterhub-k8s/v0.4", allowed_specs=["^jupyterhub.*"]
+    )
+    assert not provider.is_banned()
+
+
+def test_not_allowed():
+    provider = GitHubRepoProvider(
+        spec="jupyterhub/zero-to-jupyterhub-k8s/v0.4", allowed_specs=["^yuvipanda.*"]
+    )
+    assert provider.is_banned()
+
+
+def test_allowed_but_banned():
+    provider = GitHubRepoProvider(
+        spec="jupyterhub/zero-to-jupyterhub-k8s/v0.4",
+        allowed_specs=["^jupyterhub.*"],
+        banned_specs=[".*zero-to-.*"],
     )
     assert provider.is_banned()
 

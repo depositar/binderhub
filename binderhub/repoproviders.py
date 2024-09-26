@@ -15,7 +15,7 @@ import re
 import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import escapism
 from prometheus_client import Gauge
@@ -67,11 +67,29 @@ class RepoProvider(LoggingConfigurable):
         """
     )
 
+    allowed_specs = List(
+        help="""
+        List of specs to allow building.
+
+        Should be a list of regexes (not regex objects) that match specs which
+        should be allowed.
+
+        A spec is allowed if:
+        1. it matches allowed_specs and does not match banned_specs or
+        2. allowed_specs is unspecified and the spec does not match banned_specs.
+        """,
+        config=True,
+    )
+
     banned_specs = List(
         help="""
         List of specs to blacklist building.
 
         Should be a list of regexes (not regex objects) that match specs which should be blacklisted
+
+        A spec is allowed if:
+        1. it matches allowed_specs and does not match banned_specs or
+        2. allowed_specs is unspecified and the spec does not match banned_specs.
         """,
         config=True,
     )
@@ -112,13 +130,22 @@ class RepoProvider(LoggingConfigurable):
 
     def is_banned(self):
         """
-        Return true if the given spec has been banned
+        Return true if the given spec has been banned or explicitly
+        not allowed.
         """
         for banned in self.banned_specs:
             # Ignore case, because most git providers do not
             # count DS-100/textbook as different from ds-100/textbook
             if re.match(banned, self.spec, re.IGNORECASE):
                 return True
+        if self.allowed_specs and len(self.allowed_specs):
+            for allowed in self.allowed_specs:
+                if re.match(allowed, self.spec, re.IGNORECASE):
+                    return False
+            # allowed_specs is not empty but spec is not in it: banned.
+            return True
+        # allowed_specs unspecified or empty and spec does not match
+        # banned_specs: not banned.
         return False
 
     def has_higher_quota(self):
@@ -471,30 +498,35 @@ class CKANProvider(RepoProvider):
     async def get_resolved_ref(self):
         parsed_repo = urlparse(self.repo)
 
-        url_parts_1 = parsed_repo.path.split("/history/")
-        url_parts_2 = url_parts_1[0].split("/")
-        if url_parts_2[-2] == "dataset":
-            self.dataset_id = url_parts_2[-1]
-        else:
+        if "/dataset/" not in parsed_repo.path:
+            # Not actually a dataset
             return None
 
-        api_url_path = "/api/3/action/"
+        # CKAN may be under a URL prefix, and we should accomodate that
+        url_prefix, dataset_url = parsed_repo.path.split("/dataset/")
+
+        dataset_url_parts = dataset_url.split("/")
+        self.dataset_id = dataset_url_parts[0]
+
         api = parsed_repo._replace(
-            path="/".join(url_parts_2[:-2]) + api_url_path, query=""
+            path=f"{url_prefix}/api/3/action/", query=""
         ).geturl()
 
-        # handle the activites
+        # Activity ID may be present either as a query parameter, activity_id
+        # or as part of the URL, under `/history/<activity-id>`. If `/history/`
+        # is present, that takes precedence over `activity_id`
         activity_id = None
-        if parse_qs(parsed_repo.query).get("activity_id") is not None:
+        if "history" in dataset_url_parts:
+            activity_id = dataset_url_parts[dataset_url_parts.index("history") + 1]
+        elif parse_qs(parsed_repo.query).get("activity_id") is not None:
             activity_id = parse_qs(parsed_repo.query).get("activity_id")[0]
-        if len(url_parts_1) == 2:
-            activity_id = url_parts_1[-1]
+
         if activity_id:
-            fetch_url = (
-                f"{api}activity_data_show?" f"id={activity_id}&object_type=package"
+            fetch_url = f"{api}activity_data_show?" + urlencode(
+                {"id": activity_id, "object_type": "package"}
             )
         else:
-            fetch_url = f"{api}package_show?id={self.dataset_id}"
+            fetch_url = f"{api}package_show?" + urlencode({"id": self.dataset_id})
 
         client = AsyncHTTPClient()
         try:
