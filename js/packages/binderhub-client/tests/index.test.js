@@ -1,6 +1,3 @@
-// fetch polyfill (only needed for node tests)
-import { fetch, TextDecoder } from "@whatwg-node/fetch";
-
 import {
   BinderRepository,
   makeShareableBinderURL,
@@ -9,32 +6,9 @@ import {
 import { parseEventSource, simpleEventSourceServer } from "./utils";
 import { readFileSync } from "node:fs";
 
-async function wrapFetch(resource, options) {
-  /* like fetch, but ignore signal input 
-  // abort signal shows up as uncaught in tests, despite  working fine
-  */
-  if (options) {
-    options.signal = null;
-  }
-  return fetch.apply(null, [resource, options]);
-}
-
-beforeAll(() => {
-  // inject globals for fetch
-  global.TextDecoder = TextDecoder;
-  if (!global.window) {
-    global.window = {};
-  }
-  if (!global.window.fetch) {
-    global.window.fetch = wrapFetch;
-  }
-});
-
 test("Passed in URL object is not modified", () => {
   const buildEndpointUrl = new URL("https://test-binder.org/build");
-  const br = new BinderRepository("gh/test/test", buildEndpointUrl, {
-    buildToken: "token",
-  });
+  const br = new BinderRepository("gh/test/test", buildEndpointUrl, "token");
   expect(br.buildEndpointUrl.toString()).not.toEqual(
     buildEndpointUrl.toString(),
   );
@@ -42,15 +16,13 @@ test("Passed in URL object is not modified", () => {
 
 test("Invalid URL errors out", () => {
   expect(() => {
-    new BinderRepository("gh/test/test", "/build", { buildToken: "token" });
+    new BinderRepository("gh/test/test", "/build", "token");
   }).toThrow(TypeError);
 });
 
 test("Passing buildOnly flag works", () => {
   const buildEndpointUrl = new URL("https://test-binder.org/build");
-  const br = new BinderRepository("gh/test/test", buildEndpointUrl, {
-    buildOnly: true,
-  });
+  const br = new BinderRepository("gh/test/test", buildEndpointUrl, null, true);
   expect(br.buildUrl.toString()).toEqual(
     "https://test-binder.org/build/gh/test/test?build_only=true",
   );
@@ -74,9 +46,7 @@ test("Build URL correctly built from Build Endpoint", () => {
 
 test("Build URL correctly built from Build Endpoint when used with token", () => {
   const buildEndpointUrl = new URL("https://test-binder.org/build");
-  const br = new BinderRepository("gh/test/test", buildEndpointUrl, {
-    buildToken: "token",
-  });
+  const br = new BinderRepository("gh/test/test", buildEndpointUrl, "token");
   expect(br.buildUrl.toString()).toEqual(
     "https://test-binder.org/build/gh/test/test?build_token=token",
   );
@@ -274,16 +244,12 @@ describe("Invalid eventsource response causes failure", () => {
   test("Invalid eventsource response should cause failure", async () => {
     const buildEndpointUrl = new URL(`${serverUrl}/build`);
     const br = new BinderRepository("gh/test/test", buildEndpointUrl);
-    let messages = [];
     for await (const item of br.fetch()) {
-      messages.push(item);
-    }
-    expect(messages).toStrictEqual([
-      {
+      expect(item).toStrictEqual({
         phase: "failed",
-        message: "Event stream closed unexpectedly\n",
-      },
-    ]);
+        message: "Failed to connect to event stream\n",
+      });
+    }
   });
 });
 

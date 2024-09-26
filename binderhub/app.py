@@ -964,7 +964,8 @@ class BinderHub(Application):
                 "enable_api_only_mode": self.enable_api_only_mode,
             }
         )
-        self.tornado_settings["cookie_secret"] = os.urandom(32)
+        if self.auth_enabled:
+            self.tornado_settings["cookie_secret"] = os.urandom(32)
         if self.cors_allow_origin:
             self.tornado_settings.setdefault("headers", {})[
                 "Access-Control-Allow-Origin"
